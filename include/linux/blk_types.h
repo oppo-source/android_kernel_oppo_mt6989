@@ -341,6 +341,9 @@ enum {
 	BIO_QOS_MERGED,		/* but went through rq_qos merge path */
 	BIO_REMAPPED,
 	BIO_ZONE_WRITE_LOCKED,	/* Owns a zoned device zone write lock */
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	BIO_FLAG_UX,
+#endif
 	BIO_FLAG_LAST
 };
 
@@ -430,7 +433,9 @@ enum req_flag_bits {
 	 */
 	/* for REQ_OP_WRITE_ZEROES: */
 	__REQ_NOUNMAP,		/* do not free blocks when zeroing */
-
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	__REQ_UX,
+#endif
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -459,6 +464,10 @@ enum req_flag_bits {
 
 #define REQ_DRV		(__force blk_opf_t)(1ULL << __REQ_DRV)
 #define REQ_SWAP	(__force blk_opf_t)(1ULL << __REQ_SWAP)
+
+#ifdef CONFIG_BLOCKIO_UX_OPT
+#define REQ_UX	(__force blk_opf_t)(1ULL << __REQ_UX)
+#endif
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)

@@ -515,15 +515,14 @@ fail_unlock:
  */
 struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 				   struct vm_area_struct *vma,
-				   unsigned long addr, bool do_poll,
-				   struct swap_iocb **plug)
+				   unsigned long addr, struct swap_iocb **plug)
 {
 	bool page_was_allocated;
 	struct page *retpage = __read_swap_cache_async(entry, gfp_mask,
 			vma, addr, &page_was_allocated);
 
 	if (page_was_allocated)
-		swap_readpage(retpage, do_poll, plug);
+		swap_readpage(retpage, false, plug);
 
 	return retpage;
 }
@@ -574,7 +573,11 @@ static unsigned long swapin_nr_pages(unsigned long offset)
 	unsigned int hits, pages, max_pages;
 	static atomic_t last_readahead_pages;
 
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+	max_pages = 1;
+#else
 	max_pages = 1 << READ_ONCE(page_cluster);
+#endif
 	if (max_pages <= 1)
 		return 1;
 
@@ -618,7 +621,7 @@ struct page *swap_cluster_readahead(swp_entry_t entry, gfp_t gfp_mask,
 	struct swap_info_struct *si = swp_swap_info(entry);
 	struct blk_plug plug;
 	struct swap_iocb *splug = NULL;
-	bool do_poll = true, page_allocated;
+	bool page_allocated;
 	struct vm_area_struct *vma = vmf->vma;
 	unsigned long addr = vmf->address;
 
@@ -626,7 +629,6 @@ struct page *swap_cluster_readahead(swp_entry_t entry, gfp_t gfp_mask,
 	if (!mask)
 		goto skip;
 
-	do_poll = false;
 	/* Read a page_cluster sized and aligned cluster around offset. */
 	start_offset = offset & ~mask;
 	end_offset = offset | mask;
@@ -658,7 +660,7 @@ struct page *swap_cluster_readahead(swp_entry_t entry, gfp_t gfp_mask,
 	lru_add_drain();	/* Push any new pages onto the LRU now */
 skip:
 	/* The page was likely read above, so no need for plugging here */
-	return read_swap_cache_async(entry, gfp_mask, vma, addr, do_poll, NULL);
+	return read_swap_cache_async(entry, gfp_mask, vma, addr, NULL);
 }
 
 int init_swap_address_space(unsigned int type, unsigned long nr_pages)
@@ -722,8 +724,17 @@ static void swap_ra_info(struct vm_fault *vmf,
 	pte_t *tpte;
 #endif
 
+	/*
+	 * readahead on zram1 will lead to swap leak as swapout only
+	 * calls swap_alloc_cluster which doesn't reclaim readahead
+	 * swapcache
+	 */
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+	max_win = 1;
+#else
 	max_win = 1 << min_t(unsigned int, READ_ONCE(page_cluster),
 			     SWAP_RA_ORDER_CEILING);
+#endif
 	if (max_win == 1) {
 		ra_info->win = 1;
 		return;
@@ -832,7 +843,7 @@ static struct page *swap_vma_readahead(swp_entry_t fentry, gfp_t gfp_mask,
 skip:
 	/* The page was likely read above, so no need for plugging here */
 	return read_swap_cache_async(fentry, gfp_mask, vma, vmf->address,
-				     ra_info.win == 1, NULL);
+				     NULL);
 }
 
 /**

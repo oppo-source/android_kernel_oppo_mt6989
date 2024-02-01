@@ -110,6 +110,9 @@ enum {
 	UPIU_TASK_ATTR_ORDERED	= 0x01,
 	UPIU_TASK_ATTR_HEADQ	= 0x02,
 	UPIU_TASK_ATTR_ACA	= 0x03,
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	UPIU_CP_HIGH = 0x04,
+#endif
 };
 
 /* UPIU Query request function */

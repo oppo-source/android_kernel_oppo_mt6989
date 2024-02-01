@@ -36,6 +36,7 @@
 #include <scsi/scsi_dh.h>
 
 #include <trace/events/scsi.h>
+#include <linux/blk_types.h>
 
 #include "scsi_debugfs.h"
 #include "scsi_priv.h"
@@ -1752,7 +1753,12 @@ static blk_status_t scsi_queue_rq(struct blk_mq_hw_ctx *hctx,
 		cmd->flags |= SCMD_TAGGED;
 	if (bd->last)
 		cmd->flags |= SCMD_LAST;
-
+	
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (req->cmd_flags & REQ_UX)
+		cmd->flags |= SCMD_UX;
+#endif
+	
 	scsi_set_resid(cmd, 0);
 	memset(cmd->sense_buffer, 0, SCSI_SENSE_BUFFERSIZE);
 	cmd->submitter = SUBMITTED_BY_BLOCK_LAYER;
@@ -1980,6 +1986,10 @@ int scsi_mq_setup_tags(struct Scsi_Host *shost)
 	tag_set->nr_hw_queues = shost->nr_hw_queues ? : 1;
 	tag_set->nr_maps = shost->nr_maps ? : 1;
 	tag_set->queue_depth = shost->can_queue;
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (tag_set->queue_depth > 28)
+        	tag_set->reserved_tags = 2;
+#endif
 	tag_set->cmd_size = cmd_size;
 	tag_set->numa_node = dev_to_node(shost->dma_dev);
 	tag_set->flags = BLK_MQ_F_SHOULD_MERGE;

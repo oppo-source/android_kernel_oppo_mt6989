@@ -736,6 +736,10 @@ enum {
 	BLK_MQ_REQ_RESERVED	= (__force blk_mq_req_flags_t)(1 << 1),
 	/* set RQF_PM */
 	BLK_MQ_REQ_PM		= (__force blk_mq_req_flags_t)(1 << 2),
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	/* set UX_DATA */
+	BLK_MQ_REQ_UX		= (__force blk_mq_req_flags_t)(1 << 3),
+#endif
 };
 
 struct request *blk_mq_alloc_request(struct request_queue *q, blk_opf_t opf,

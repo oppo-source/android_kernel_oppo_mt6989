@@ -860,6 +860,11 @@ static struct request *attempt_merge(struct request_queue *q,
 
 	req->__data_len += blk_rq_bytes(next);
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (next->cmd_flags & REQ_UX)
+		req->cmd_flags |= REQ_UX;
+#endif
+	
 	if (!blk_discard_mergable(req))
 		elv_merge_requests(q, req, next);
 
@@ -1109,8 +1114,13 @@ bool blk_attempt_plug_merge(struct request_queue *q, struct bio *bio,
 	rq_list_for_each(&plug->mq_list, rq) {
 		if (rq->q == q) {
 			if (blk_attempt_bio_merge(q, rq, bio, nr_segs, false) ==
-			    BIO_MERGE_OK)
+			    BIO_MERGE_OK){
+#ifdef CONFIG_BLOCKIO_UX_OPT
+				if ((bio->bi_flags & (1 << BIO_FLAG_UX)) != 0)
+					rq->cmd_flags |= REQ_UX;
+#endif
 				return true;
+			}
 			break;
 		}
 
@@ -1142,6 +1152,10 @@ bool blk_bio_list_merge(struct request_queue *q, struct list_head *list,
 		case BIO_MERGE_NONE:
 			continue;
 		case BIO_MERGE_OK:
+#ifdef CONFIG_BLOCKIO_UX_OPT
+			if ((bio->bi_flags & (1 << BIO_FLAG_UX)) != 0)
+				rq->cmd_flags |= REQ_UX;
+#endif
 			return true;
 		case BIO_MERGE_FAILED:
 			return false;
@@ -1164,6 +1178,10 @@ bool blk_mq_sched_try_merge(struct request_queue *q, struct bio *bio,
 			return false;
 		if (bio_attempt_back_merge(rq, bio, nr_segs) != BIO_MERGE_OK)
 			return false;
+#ifdef CONFIG_BLOCKIO_UX_OPT
+		if ((bio->bi_flags & (1 << BIO_FLAG_UX)) != 0)
+			rq->cmd_flags |= REQ_UX;
+#endif
 		*merged_request = attempt_back_merge(q, rq);
 		if (!*merged_request)
 			elv_merged_request(q, rq, ELEVATOR_BACK_MERGE);
@@ -1173,6 +1191,10 @@ bool blk_mq_sched_try_merge(struct request_queue *q, struct bio *bio,
 			return false;
 		if (bio_attempt_front_merge(rq, bio, nr_segs) != BIO_MERGE_OK)
 			return false;
+#ifdef CONFIG_BLOCKIO_UX_OPT
+		if ((bio->bi_flags & (1 << BIO_FLAG_UX)) != 0)
+			rq->cmd_flags |= REQ_UX;
+#endif
 		*merged_request = attempt_front_merge(q, rq);
 		if (!*merged_request)
 			elv_merged_request(q, rq, ELEVATOR_FRONT_MERGE);

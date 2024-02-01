@@ -54,6 +54,11 @@ struct scsi_pointer {
 #define SCMD_INITIALIZED	(1 << 1)
 #define SCMD_LAST		(1 << 2)
 #define SCMD_FAIL_IF_RECOVERING	(1 << 4)
+
+#ifdef CONFIG_BLOCKIO_UX_OPT
+#define SCMD_UX (1 << 15)
+#endif
+
 /* flags preserved across unprep / reprep */
 #define SCMD_PRESERVED_FLAGS	(SCMD_INITIALIZED | SCMD_FAIL_IF_RECOVERING)
 

@@ -16,6 +16,10 @@
 #include "blk-mq-sched.h"
 #include "blk-mq-tag.h"
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+extern unsigned long ux_re_tag_cnt;
+#endif
+
 /*
  * Recalculate wakeup batch when tag is shared by hctx.
  */
@@ -146,7 +150,22 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 
 	if (data->flags & BLK_MQ_REQ_NOWAIT)
 		return BLK_MQ_NO_TAG;
+	
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if ((data->flags & BLK_MQ_REQ_UX) != 0){
+		bt = &tags->breserved_tags;
+		tag_offset = 0;
+		tag = __blk_mq_get_tag(data, bt);
+		if (tag != BLK_MQ_NO_TAG) {
+			ux_re_tag_cnt++;
+			goto found_tag;
+		}
 
+		bt = &tags->bitmap_tags;
+		tag_offset = tags->nr_reserved_tags;
+	}
+#endif
+	
 	ws = bt_wait_ptr(bt, data->hctx);
 	do {
 		struct sbitmap_queue *bt_prev;
@@ -165,7 +184,22 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 		tag = __blk_mq_get_tag(data, bt);
 		if (tag != BLK_MQ_NO_TAG)
 			break;
+		
+#ifdef CONFIG_BLOCKIO_UX_OPT
+		if ((data->flags & BLK_MQ_REQ_UX) != 0){
+			bt = &tags->breserved_tags;
+			tag_offset = 0;
+			tag = __blk_mq_get_tag(data, bt);
+			if (tag != BLK_MQ_NO_TAG) {
+				ux_re_tag_cnt++;
+				break;
+			}
 
+			bt = &tags->bitmap_tags;
+			tag_offset = tags->nr_reserved_tags;
+		}
+#endif
+		
 		sbitmap_prepare_to_wait(bt, ws, &wait, TASK_UNINTERRUPTIBLE);
 
 		tag = __blk_mq_get_tag(data, bt);
@@ -221,6 +255,9 @@ void blk_mq_put_tag(struct blk_mq_tags *tags, struct blk_mq_ctx *ctx,
 		sbitmap_queue_clear(&tags->bitmap_tags, real_tag, ctx->cpu);
 	} else {
 		sbitmap_queue_clear(&tags->breserved_tags, tag, ctx->cpu);
+#ifdef CONFIG_BLOCKIO_UX_OPT
+		sbitmap_queue_wake_up(&tags->bitmap_tags,1);
+#endif
 	}
 }
 

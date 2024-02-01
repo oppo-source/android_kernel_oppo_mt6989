@@ -76,6 +76,10 @@
 #include "blk-mq-tag.h"
 #include "blk-mq-sched.h"
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+extern void dm_bufio_shrink_scan_bypass(unsigned long task, bool *process);
+#endif
+
 /* PREFLUSH/FUA sequences */
 enum {
 	REQ_FSEQ_PREFLUSH	= (1 << 0), /* pre-flushing in progress */
@@ -298,6 +302,10 @@ static void blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq,
 		list_first_entry(pending, struct request, flush.list);
 	struct request *flush_rq = fq->flush_rq;
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	bool is_highpro_process = false;
+#endif
+	
 	/* C1 described at the top of this file */
 	if (fq->flush_pending_idx != fq->flush_running_idx || list_empty(pending))
 		return;
@@ -343,6 +351,12 @@ static void blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq,
 	flush_rq->cmd_flags |= (flags & REQ_DRV) | (flags & REQ_FAILFAST_MASK);
 	flush_rq->rq_flags |= RQF_FLUSH_SEQ;
 	flush_rq->end_io = flush_end_io;
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	dm_bufio_shrink_scan_bypass((unsigned long)current, &is_highpro_process);
+	if (is_highpro_process)
+		flush_rq->cmd_flags |= REQ_UX;
+#endif
+	
 	/*
 	 * Order WRITE ->end_io and WRITE rq->ref, and its pair is the one
 	 * implied in refcount_inc_not_zero() called from

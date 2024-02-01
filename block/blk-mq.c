@@ -43,11 +43,33 @@
 #include "blk-mq-sched.h"
 #include "blk-rq-qos.h"
 #include "blk-ioprio.h"
+#ifdef CONFIG_OPLUS_RESCTRL
+#include "../drivers/soc/oplus/oplus_resctrl/resctrl.h"
+#endif
 
 static DEFINE_PER_CPU(struct llist_head, blk_cpu_done);
 
 static void blk_mq_poll_stats_start(struct request_queue *q);
 static void blk_mq_poll_stats_fn(struct blk_stat_callback *cb);
+
+#ifdef CONFIG_BLOCKIO_UX_OPT
+DEFINE_PER_CPU(__u32, block_ux_softirqs);
+unsigned long blk_send_ipi_counter = 0;
+extern bool should_queue_work_ux(struct bio *bio);
+extern void dm_bufio_shrink_scan_bypass(unsigned long task, bool *process);
+void set_block_ux_softirqs(void)
+{
+}
+
+__u32 get_block_ux_softirqs(void)
+{
+	return 0;
+}
+
+void clear_block_ux_softirqs(void)
+{
+}
+#endif
 
 static int blk_mq_poll_stats_bkt(const struct request *rq)
 {
@@ -572,7 +594,9 @@ struct request *blk_mq_alloc_request(struct request_queue *q, blk_opf_t opf,
 		blk_mq_req_flags_t flags)
 {
 	struct request *rq;
-
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	bool is_highpro_process = false;
+#endif
 	rq = blk_mq_alloc_cached_request(q, opf, flags);
 	if (!rq) {
 		struct blk_mq_alloc_data data = {
@@ -594,6 +618,11 @@ struct request *blk_mq_alloc_request(struct request_queue *q, blk_opf_t opf,
 	rq->__data_len = 0;
 	rq->__sector = (sector_t) -1;
 	rq->bio = rq->biotail = NULL;
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	dm_bufio_shrink_scan_bypass((unsigned long)current, &is_highpro_process);
+	if (is_highpro_process)
+		rq->cmd_flags |= REQ_UX;
+#endif
 	return rq;
 out_queue_exit:
 	blk_queue_exit(q);
@@ -975,6 +1004,9 @@ static inline void blk_account_io_done(struct request *req, u64 now)
 	 * normal IO on queueing nor completion.  Accounting the
 	 * containing request is enough.
 	 */
+#ifdef CONFIG_OPLUS_RESCTRL
+	android_vh_blk_account_io_done_handler(NULL, req);
+#endif
 	if (blk_do_io_stat(req) && req->part &&
 	    !(req->rq_flags & RQF_FLUSH_SEQ))
 		__blk_account_io_done(req, now);
@@ -1126,6 +1158,18 @@ static int blk_softirq_cpu_dead(unsigned int cpu)
 
 static void __blk_mq_complete_request_remote(void *data)
 {
+#ifdef CONFIG_BLOCKIO_UX_OPT
+		struct request *rq = (struct request *)data;
+		struct bio *bio;
+
+		for (bio = rq->bio; bio; bio = bio->bi_next) {
+			if (should_queue_work_ux(bio)) {
+				set_block_ux_softirqs();
+				break;
+			}
+		}
+#endif
+
 	__raise_softirq_irqoff(BLOCK_SOFTIRQ);
 }
 
@@ -1174,8 +1218,19 @@ static void blk_mq_raise_softirq(struct request *rq)
 
 	preempt_disable();
 	list = this_cpu_ptr(&blk_cpu_done);
-	if (llist_add(&rq->ipi_list, list))
+	if (llist_add(&rq->ipi_list, list)) {
+#ifdef CONFIG_BLOCKIO_UX_OPT
+		struct bio *bio;
+
+		for (bio = rq->bio; bio; bio = bio->bi_next) {
+			if (should_queue_work_ux(bio)) {
+				set_block_ux_softirqs();
+				break;
+			}
+		}
+#endif
 		raise_softirq(BLOCK_SOFTIRQ);
+	}
 	preempt_enable();
 }
 
@@ -1194,6 +1249,9 @@ bool blk_mq_complete_request_remote(struct request *rq)
 		return false;
 
 	if (blk_mq_complete_need_ipi(rq)) {
+#ifdef CONFIG_BLOCKIO_UX_OPT
+		blk_send_ipi_counter++;
+#endif
 		blk_mq_complete_send_ipi(rq);
 		return true;
 	}
@@ -2860,6 +2918,14 @@ static struct request *blk_mq_get_new_requests(struct request_queue *q,
 		data.cached_rq = &plug->cached_rq;
 	}
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if ((bio->bi_flags & (1 << BIO_FLAG_UX)) != 0){
+		data.flags |= BLK_MQ_REQ_UX;
+	} else {
+		data.flags &= ~BLK_MQ_REQ_UX;
+	}
+#endif
+
 	rq = __blk_mq_alloc_requests(&data);
 	if (rq)
 		return rq;
@@ -2939,6 +3005,16 @@ void blk_mq_submit_bio(struct bio *bio)
 	unsigned int nr_segs = 1;
 	blk_status_t ret;
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	bool is_highpro_process = false;
+	dm_bufio_shrink_scan_bypass((unsigned long)current, &is_highpro_process);
+	if (is_highpro_process) {
+		bio->bi_flags |= (1 << BIO_FLAG_UX);
+	} else {
+		bio->bi_flags &= ~(1 << BIO_FLAG_UX);
+	}
+#endif
+
 	bio = blk_queue_bounce(bio, q);
 	if (bio_may_exceed_limits(bio, &q->limits)) {
 		bio = __bio_split_to_limits(bio, &q->limits, &nr_segs);
@@ -2965,6 +3041,11 @@ void blk_mq_submit_bio(struct bio *bio)
 	rq_qos_track(q, rq, bio);
 
 	blk_mq_bio_to_request(rq, bio, nr_segs);
+
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if ((bio->bi_flags & (1 << BIO_FLAG_UX)) != 0)
+		rq->cmd_flags |= REQ_UX;
+#endif
 
 	ret = blk_crypto_rq_get_keyslot(rq);
 	if (ret != BLK_STS_OK) {

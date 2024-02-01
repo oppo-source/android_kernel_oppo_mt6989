@@ -101,6 +101,11 @@
 /* Polling time to wait for fDeviceInit */
 #define FDEVICEINIT_COMPL_TIMEOUT 1500 /* millisecs */
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+unsigned long uxcmd_cnt;
+unsigned long cmd_cnt;
+#endif
+
 /* UFSHC 4.0 compliant HC support this mode, refer param_set_mcq_mode() */
 static bool use_mcq_mode = true;
 
@@ -2676,6 +2681,15 @@ static void ufshcd_prepare_req_desc_hdr(struct ufshcd_lrb *lrbp, u8 *upiu_flags,
 		*upiu_flags = UPIU_CMD_FLAGS_NONE;
 	}
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if(lrbp->cmd && (lrbp->cmd->flags & SCMD_UX)) {
+		*upiu_flags |= UPIU_CP_HIGH;
+		uxcmd_cnt++;
+	} else {
+		cmd_cnt++;
+	}
+#endif
+	
 	dword_0 = data_direction | (lrbp->command_type << UPIU_COMMAND_TYPE_OFFSET) |
 		ehs_length << 8;
 	if (lrbp->intr_cmd)
